@@ -1,5 +1,5 @@
 import numpy as np
-
+import random
 
 class Dist:
 
@@ -23,7 +23,7 @@ class Dist:
         self.other_res_upper = max_nw_size / 5
 
     def normal_dist(self):
-
+        print('normal')
         # new work duration
         nw_len = np.random.randint(1, self.job_len + 1)  # same length in every dimension
 
@@ -35,11 +35,11 @@ class Dist:
         return nw_len, nw_size
 
     def bi_model_dist(self):
-
         # -- job length --
         #MARK: changed
         nw_size = 0
         nw_len = 0
+        priority = float('%.1f'%(np.random.uniform(0.1,0.9)))
         if np.random.rand() < self.job_small_chance:  # small job
             nw_len = np.random.randint(self.job_len_small_lower,
                                        self.job_len_small_upper + 1)
@@ -50,7 +50,7 @@ class Dist:
                                        self.job_len_big_upper + 1)
             nw_size = np.random.randint(self.dominant_res_lower,
                                         self.dominant_res_upper + 1)
-        return nw_len, nw_size
+        return nw_len, nw_size, priority
 
 #MARK: changed
 # def generate_sequence_work(pa, seed=42):

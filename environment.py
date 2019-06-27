@@ -7,7 +7,7 @@ from parameter import Parameters
 
 
 class Env:
-    def __init__(self, pa, nw_len_seqs=None, nw_size_seqs=None,
+    def __init__(self, pa, nw_len_seqs=None, nw_size_seqs=None, nw_priority_seqs=None,
                  seed=42, render=False, repre='image', end='no_new_job'):
         #TODO: must change res_slot from an integer to an array of integers
         self.pa = pa
@@ -26,8 +26,9 @@ class Env:
             np.random.seed(seed)
 
         if nw_len_seqs is None or nw_size_seqs is None:
+            #MARK: changed
             # generate new work
-            self.nw_len_seqs, self.nw_size_seqs = \
+            self.nw_len_seqs, self.nw_size_seqs, self.nw_priority_seqs = \
                 self.generate_sequence_work(self.pa.simu_len * self.pa.num_ex)
 
             # self.workload = np.zeros(pa.num_res)
@@ -42,9 +43,12 @@ class Env:
             #MARK: changed
             self.nw_size_seqs = np.reshape(self.nw_size_seqs,
                                            [self.pa.num_ex, self.pa.simu_len])
+            self.nw_priority_seqs = np.reshape(self.nw_priority_seqs,
+                                          [self.pa.num_ex, self.pa.simu_len])
         else:
             self.nw_len_seqs = nw_len_seqs
             self.nw_size_seqs = nw_size_seqs
+            self.nw_priority_seqs = nw_priority_seqs
 
         self.seq_no = 0  # which example sequence
         self.seq_idx = 0  # index in that sequence
@@ -57,32 +61,30 @@ class Env:
         self.extra_info = ExtraInfo(pa)
 
     def generate_sequence_work(self, simu_len):
-
         nw_len_seq = np.zeros(simu_len, dtype=int)
         #Mark: changed
         nw_size_seq = np.zeros(simu_len, dtype=int)
-
+        nw_priority_seq = np.zeros(simu_len, dtype=float)
         for i in range(simu_len):
 
             if np.random.rand() < self.pa.new_job_rate:  # a new job comes
                 #TODO: change nw_dist
-                nw_len_seq[i], nw_size_seq[i] = self.nw_dist()
-
-        return nw_len_seq, nw_size_seq
+                nw_len_seq[i], nw_size_seq[i], nw_priority_seq[i] = self.nw_dist()
+        return nw_len_seq, nw_size_seq, nw_priority_seq
 
     def get_new_job_from_seq(self, seq_no, seq_idx):
         #Mark: changed
         new_job = Job(res=self.nw_size_seqs[seq_no, seq_idx],
                       job_len=self.nw_len_seqs[seq_no, seq_idx],
                       job_id=len(self.job_record.record),
-                      enter_time=self.curr_time)
+                      enter_time=self.curr_time,
+                      priority=self.nw_priority_seqs[seq_no, seq_idx])
         return new_job
 
     def observe(self):
         if self.repre == 'image':
 
             backlog_width = int(math.ceil(self.pa.backlog_size / float(self.pa.time_horizon)))
-
             image_repr = np.zeros((self.pa.network_input_height, self.pa.network_input_width))
 
             ir_pt = 0
@@ -97,16 +99,24 @@ class Env:
                     if self.job_slot.slot[j] is not None:  # fill in a block of work
                         #TODO: change res_vec in job class
                         #Mark: changed
-                        image_repr[: self.job_slot.slot[j].len, ir_pt: ir_pt + self.job_slot.slot[j].res] = 1
+                        #MARK: priority added
+                        image_repr[: self.job_slot.slot[j].len, ir_pt: ir_pt + self.job_slot.slot[j].res] = self.job_slot.slot[j].priority
 
                     ir_pt += self.pa.max_job_size
+            #MARK: backlog changed (priority added)
+            # image_repr[: int(self.job_backlog.curr_size / backlog_width), ir_pt: ir_pt + backlog_width] = 9
+            # if self.job_backlog.curr_size % backlog_width > 0:
+            #     image_repr[int(self.job_backlog.curr_size / backlog_width),
+            #     ir_pt: ir_pt + self.job_backlog.curr_size % backlog_width] = 8
 
-            image_repr[: int(self.job_backlog.curr_size / backlog_width), ir_pt: ir_pt + backlog_width] = 1
-            if self.job_backlog.curr_size % backlog_width > 0:
-                image_repr[int(self.job_backlog.curr_size / backlog_width),
-                ir_pt: ir_pt + self.job_backlog.curr_size % backlog_width] = 1
+            backlog_index_to_fill = 0
+            for job in self.job_backlog.backlog:
+                if job is None:
+                    continue
+                image_repr[int(backlog_index_to_fill/backlog_width), ir_pt+int(backlog_index_to_fill%backlog_width)] = job.priority
+                backlog_index_to_fill += 1
+
             ir_pt += backlog_width
-
             image_repr[:, ir_pt: ir_pt + 1] = self.extra_info.time_since_last_new_job / \
                                               float(self.extra_info.max_tracking_time_since_last_job)
             ir_pt += 1
@@ -216,18 +226,18 @@ class Env:
     #     # plt.pause(0.01)  # automatic
 
     def get_reward(self):
-
+        #MARK: changed (priority added)
         reward = 0
         for j in self.machine.running_job:
             reward += self.pa.delay_penalty / float(j.len)
 
         for j in self.job_slot.slot:
             if j is not None:
-                reward += self.pa.hold_penalty / float(j.len)
+                reward += (self.pa.hold_penalty / float(j.len)) / j.priority
 
         for j in self.job_backlog.backlog:
             if j is not None:
-                reward += self.pa.dismiss_penalty / float(j.len)
+                reward += (self.pa.dismiss_penalty / float(j.len)) / j.priority
 
         return reward
 
@@ -339,7 +349,7 @@ class Env:
 
 
 class Job:
-    def __init__(self, res, job_len, job_id, enter_time):
+    def __init__(self, res, job_len, job_id, enter_time, priority):
         #MARK: changed
         self.id = job_id
         self.res = res
@@ -347,6 +357,7 @@ class Job:
         self.enter_time = enter_time
         self.start_time = -1  # not being allocated
         self.finish_time = -1
+        self.priority = priority
 
 
 class JobSlot:
@@ -556,13 +567,26 @@ if __name__ == '__main__':
     # test_compact_speed()
     # test_image_speed()
     pa = Parameters()
+    pa.simu_len = 20
     env = Env(pa)
 
 
+    # env.step(0)
+    # env.step(0)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(0)
+    # env.step(5)
+    # env.step(0)
+    # env.step(0)
+    # env.step(0)
+    # env.step(1)
     env.step(0)
-    print(env.job_slot.slot[0].res)
-    print(env.job_slot.slot[0].len)
-    env.step(0)
     env.step(5)
     env.step(5)
     env.step(5)
@@ -570,16 +594,21 @@ if __name__ == '__main__':
     env.step(5)
     env.step(5)
     env.step(5)
-    env.step(0)
     env.step(5)
-    env.step(0)
-    env.step(0)
-    env.step(0)
-    env.step(1)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    env.step(5)
+    # env.step(5)
+    # env.step(5)
 
-
-
-    print(env.nw_len_seqs,"aalo",env.nw_size_seqs)
+    print(env.nw_len_seqs,"aalo",env.nw_size_seqs,env.nw_priority_seqs)
     print("********************")
-    np.savetxt("somefile.txt", env.observe(), fmt="%.2f")
+    print(env.job_backlog.curr_size)
+    np.savetxt("somefile.txt", env.observe(), fmt="%-5.2f")
 

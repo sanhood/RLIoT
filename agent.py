@@ -264,14 +264,14 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
             for r in manager_result:
                 result.append(r)
             manager_result = manager.list([])
-            print("ok")
+            # print("ok")
             all_ob = concatenate_all_ob_across_examples([r["all_ob"] for r in result], pa)
             all_action = np.concatenate([r["all_action"] for r in result])
             all_adv = np.concatenate([r["all_adv"] for r in result])
             pg_learners[0].fit(all_ob, all_action, all_adv)
 
             all_eprews.extend([r["all_eprews"] for r in result])
-            print(all_eprews)
+            # print(all_eprews)
             eprews.extend(np.concatenate([r["all_eprews"] for r in result]))  # episode total rewards
             eplens.extend(np.concatenate([r["all_eplens"] for r in result]))  # episode lengths
             all_slowdown.extend(np.concatenate([r["all_slowdown"] for r in result]))

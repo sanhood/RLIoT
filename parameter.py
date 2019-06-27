@@ -43,11 +43,11 @@ class Parameters:
         assert self.backlog_size % self.time_horizon == 0  # such that it can be converted into an image
         self.backlog_width = int(math.ceil(self.backlog_size / float(self.time_horizon)))
         self.network_input_height = self.time_horizon
-        self.network_input_width = \
+        self.network_input_width = int( \
             (self.res_slot +
              self.max_job_size * self.num_nw) * self.num_res + \
             self.backlog_width + \
-            1  # for extra info, 1) time since last new job
+            1 ) # for extra info, 1) time since last new job
 
         # compact representation
         self.network_compact_dim = (self.num_res + 1) * \
@@ -74,11 +74,11 @@ class Parameters:
         assert self.backlog_size % self.time_horizon == 0  # such that it can be converted into an image
         self.backlog_width = self.backlog_size / self.time_horizon
         self.network_input_height = self.time_horizon
-        self.network_input_width = \
+        self.network_input_width = int( \
             (self.res_slot +
              self.max_job_size * self.num_nw) * self.num_res + \
             self.backlog_width + \
-            1  # for extra info, 1) time since last new job
+            1  )# for extra info, 1) time since last new job
 
         # compact representation
         self.network_compact_dim = (self.num_res + 1) * \
