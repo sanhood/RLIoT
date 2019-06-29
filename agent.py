@@ -10,6 +10,7 @@ from multiprocessing import Manager
 import environment
 import job_distribution
 import pg_network
+import plot
 
 
 def get_entropy(vec):
@@ -145,9 +146,17 @@ def get_traj_worker(pg_learner, env, pa, result):
     all_eplens = np.array([len(traj["reward"]) for traj in trajs])  # episode lengths
 
     # All Job Stat
-    enter_time, finish_time, job_len = process_all_info(trajs)
+    # MARK: changed (for plotting based on priority)
+    enter_time, finish_time, job_len, job_priority = process_all_info(trajs)
     finished_idx = (finish_time >= 0)
-    all_slowdown = (finish_time[finished_idx] - enter_time[finished_idx]) / job_len[finished_idx]
+    all_slowdown = []
+    for i in range(1,pa.num_job_priorities+1):
+        priority = 0.1 * i
+        priority_idx = (job_priority == priority)
+        condition_matrix = np.bitwise_and(priority_idx,finished_idx)
+        slow_down = (finish_time[condition_matrix] - enter_time[condition_matrix]) / job_len[condition_matrix]
+        all_slowdown.append(slow_down)
+    # all_slowdown = (finish_time[finished_idx] - enter_time[finished_idx]) / job_len[finished_idx]
 
     all_entropy = np.concatenate([traj["entropy"] for traj in trajs])
 
@@ -165,18 +174,28 @@ def process_all_info(trajs):
     enter_time = []
     finish_time = []
     job_len = []
+    # MARK: changed
+    job_priority = []
 
     for traj in trajs:
         enter_time.append(np.array([traj['info'].record[i].enter_time for i in range(len(traj['info'].record))]))
         finish_time.append(np.array([traj['info'].record[i].finish_time for i in range(len(traj['info'].record))]))
         job_len.append(np.array([traj['info'].record[i].len for i in range(len(traj['info'].record))]))
+        job_priority.append(np.array([traj['info'].record[i].priority for i in range(len(traj['info'].record))]))
 
     enter_time = np.concatenate(enter_time)
     finish_time = np.concatenate(finish_time)
     job_len = np.concatenate(job_len)
+    job_priority = np.concatenate(job_priority)
+    return enter_time, finish_time, job_len, job_priority
 
-    return enter_time, finish_time, job_len
 
+def plot_average_slowdown_no_priority():
+
+    print("Plotted!")
+
+def plot_stats():
+    print("Plotted!")
 
 def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
@@ -186,6 +205,7 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
     pg_learners = []
     envs = []
+    plot_maker = plot.PlotMaker(pa)
 
     for ex in range(pa.num_ex):
         env = environment.Env(pa,
@@ -270,6 +290,7 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
             get_traj_worker(pg_learners[ex_counter], envs[ex_idx], pa, manager_result, )
             for r in manager_result:
                 result.append(r)
+            # print(len(result))
             manager_result = manager.list([])
             # print("ok")
             all_ob = concatenate_all_ob_across_examples([r["all_ob"] for r in result], pa)
@@ -292,7 +313,11 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
 
 
             timer_end = time.time()
-
+            # print(len(all_slowdown))
+            # print(all_slowdown)
+            # MARK: changed
+            slowdown_all_in_one = np.concatenate(all_slowdown)
+            print(slowdown_all_in_one.shape)
             print ("-----------------")
             print ("Iteration: \t %i" % iteration)
             print ("NumTrajs: \t %i" % len(eprews))
@@ -300,16 +325,17 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
             print ("Loss:     \t %s" % np.mean(loss_all))
             print ("MaxRew: \t %s" % np.average([np.max(rew) for rew in all_eprews]))
             print ("MeanRew: \t %s +- %s" % (np.mean(eprews), np.std(eprews)))
-            print ("MeanSlowdown: \t %s" % np.mean(all_slowdown))
+            print ("MeanSlowdown: \t %s" % np.mean(slowdown_all_in_one))
             print ("MeanLen: \t %s +- %s" % (np.mean(eplens), np.std(eplens)))
             print ("MeanEntropy \t %s" % (np.mean(all_entropy)))
             print ("Elapsed time\t %s" % (timer_end - timer_start), "seconds")
             print ("-----------------")
 
+            plot_maker.slow_down_records.append(all_slowdown)
             with open('somefile.txt', 'a') as the_file:
 
                 the_file.write("MeanRew: \t %s +- %s\n" % (np.mean(eprews), np.std(eprews)))
-                the_file.write("MeanSlowdown: \t %s\n-----------------\n\n" % np.mean(all_slowdown))
+                the_file.write("MeanSlowdown: \t %s\n-----------------\n\n" % np.mean(slowdown_all_in_one))
 
         #TODO: set paramaetes for other agents
 
@@ -351,7 +377,7 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
         #     plot_lr_curve(pa.output_filename,
         #                   max_rew_lr_curve, mean_rew_lr_curve, slow_down_lr_curve,
         #                   ref_discount_rews, ref_slow_down)
-
+    plot_maker.plot()
 
 def main():
 
@@ -380,12 +406,11 @@ def main():
     # pa.job_len = 5
     pa.num_res = 2
 
-
+    pa.num_epochs = 501
     pg_resume = None
     # pg_resume = 'data/tmp_450.pkl'
 
     render = False
-
     launch(pa, pg_resume, render, repre='image', end='all_done')
 
 

@@ -234,11 +234,13 @@ class Env:
 
         for j in self.job_slot.slot:
             if j is not None:
-                reward += (self.pa.hold_penalty / float(j.len)) / j.priority
+                priority = 1 - j.priority
+                reward += (self.pa.hold_penalty / float(j.len)) / priority
 
         for j in self.job_backlog.backlog:
             if j is not None:
-                reward += (self.pa.dismiss_penalty / float(j.len)) / j.priority
+                priority = 1 - j.priority
+                reward += (self.pa.dismiss_penalty / float(j.len)) / priority
 
         return reward
 
@@ -323,7 +325,6 @@ class Env:
         ob = self.observe()
 
         info = self.job_record
-
         if done:
             self.seq_idx = 0
 

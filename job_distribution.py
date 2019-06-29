@@ -3,7 +3,7 @@ import random
 
 class Dist:
 
-    def __init__(self, num_res, max_nw_size, job_len):
+    def __init__(self, num_res, max_nw_size, job_len, num_job_priorities):
         self.num_res = num_res
         self.max_nw_size = max_nw_size
         self.job_len = job_len
@@ -22,6 +22,8 @@ class Dist:
         self.other_res_lower = 1
         self.other_res_upper = max_nw_size / 5
 
+        self.max_priority = num_job_priorities * 0.1
+
     def normal_dist(self):
         print('normal')
         # new work duration
@@ -39,7 +41,7 @@ class Dist:
         #MARK: changed
         nw_size = 0
         nw_len = 0
-        priority = float('%.1f'%(np.random.uniform(0.1,0.9)))
+        priority = float('%.1f'%(np.random.uniform(0.1, self.max_priority)))
         if np.random.rand() < self.job_small_chance:  # small job
             nw_len = np.random.randint(self.job_len_small_lower,
                                        self.job_len_small_upper + 1)
