@@ -36,6 +36,9 @@ class Parameters:
 
         self.discount = 1           # discount factor
 
+        # MARK: changed
+        self.alpha_loss = 1            # actions probability loss factor
+        self.beta_loss = 1             # machines probability loss factor
         # distribution for new job arrival
         self.dist = job_distribution.Dist(self.num_res, self.max_job_size, self.max_job_len)
 

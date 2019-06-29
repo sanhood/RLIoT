@@ -52,9 +52,9 @@ class Env:
 
         self.seq_no = 0  # which example sequence
         self.seq_idx = 0  # index in that sequence
-
+        biggest_job_in_sequence = np.amax(self.nw_size_seqs)
         # initialize system
-        self.machine = Machine(pa)
+        self.machine = Machine(pa,biggest_job_in_sequence)
         self.job_slot = JobSlot(pa)
         self.job_backlog = JobBacklog(pa)
         self.job_record = JobRecord()
@@ -122,6 +122,7 @@ class Env:
             ir_pt += 1
 
             assert ir_pt == image_repr.shape[1]
+
 
             return image_repr
 
@@ -241,7 +242,7 @@ class Env:
 
         return reward
 
-    def step(self, a, repeat=False):
+    def step(self, a, m, repeat=False):
 
         status = None
 
@@ -254,7 +255,7 @@ class Env:
         elif self.job_slot.slot[a] is None:  # implicit void action
             status = 'MoveOn'
         else:
-            allocated = self.machine.allocate_job(self.job_slot.slot[a], self.curr_time)
+            allocated = self.machine.allocate_job(self.job_slot.slot[a], m, self.curr_time)
             if not allocated:  # implicit void action
                 status = 'MoveOn'
             else:
@@ -341,7 +342,7 @@ class Env:
         self.curr_time = 0
 
         # initialize system
-        self.machine = Machine(self.pa)
+        self.machine = Machine(self.pa,self.pa.res_slot)
         self.job_slot = JobSlot(self.pa)
         self.job_backlog = JobBacklog(self.pa)
         self.job_record = JobRecord()
@@ -377,13 +378,36 @@ class JobRecord:
 
 
 class Machine:
-    def __init__(self, pa):
+    def __init__(self, pa,biggest_job_in_sequence):
         self.num_res = pa.num_res
         self.time_horizon = pa.time_horizon
         self.res_slot = pa.res_slot
+        # MARK: changed
+        self.avbl_slot = np.ones((self.time_horizon, self.num_res))
+        self.machine_sizes = np.ones(self.num_res)
+        small_machine_chance = pa.dist.job_small_chance
+        big_machine_upper = pa.res_slot
+        big_machine_lower = pa.res_slot * 2 / 3
+        small_machine_upper = pa.res_slot/2
+        small_machine_lower = pa.res_slot/5
+        # make sure there is at least one machine can do the biggest job
+        s = np.random.randint(biggest_job_in_sequence,
+                                 big_machine_upper + 1)
+        self.machine_sizes[-1] *=  s
+        for i in range(len(self.machine_sizes)-1):
+            if np.random.rand() < small_machine_chance:
+                size = np.random.randint(small_machine_lower,
+                                         small_machine_upper + 1)
+                self.machine_sizes[i] *= size
+                self.avbl_slot[:, i] = self.avbl_slot[:, i] * size
+            else:
+                size = np.random.randint(big_machine_lower,
+                                         big_machine_upper + 1)
+                self.machine_sizes[i] *= size
+                self.avbl_slot[:, i] = self.avbl_slot[:, i] * size
+        with open('somefile.txt', 'a') as the_file:
 
-        self.avbl_slot = np.ones((self.time_horizon, self.num_res)) * self.res_slot
-
+            the_file.write("\nMachine sizes: %s\n" % self.machine_sizes)
         self.running_job = []
 
         # colormap for graphical representation
@@ -393,51 +417,87 @@ class Machine:
         # graphical representation
         self.canvas = np.zeros((pa.num_res, pa.time_horizon, pa.res_slot))
 
-    def allocate_job(self, job, curr_time):
+    def allocate_job(self, job, machine, curr_time):
 
         allocated = False
+
+        for t in range(0, self.time_horizon - job.len):
+            # MARK: changed (specific machine allocation)
+            new_avbl_res = self.avbl_slot[t: t + job.len, machine] - job.res
+            if np.all(new_avbl_res[:] >= 0):
+                with open('somefile.txt', 'a') as the_file:
+                    the_file.write("job size: %d  allocated to: %d  with size:%d\n---------------\n"%(job.res,machine,self.machine_sizes[machine]))
+                allocated = True
+                self.avbl_slot[t: t + job.len, machine] = new_avbl_res
+                job.start_time = curr_time + t
+                job.finish_time = job.start_time + job.len
+
+                self.running_job.append(job)
+
+                # update graphical representation
+
+                used_color = np.unique(self.canvas[:])
+                # WARNING: there should be enough colors in the color map
+                for color in self.colormap:
+                    if color not in used_color:
+                        new_color = color
+                        break
+
+                assert job.start_time != -1
+                assert job.finish_time != -1
+                assert job.finish_time > job.start_time
+                canvas_start_time = job.start_time - curr_time
+                canvas_end_time = job.finish_time - curr_time
+                #MARK: changed
+                for i in range(canvas_start_time, canvas_end_time):
+                    # get free indexes ( indexes in canvas for a resource in a specific time where is 0 )
+                    avbl_slot = np.where(self.canvas[machine, i, :] == 0)[0]
+                    # fill canvas for that resource in that specific time from first available index to as much as the resource needed for that job
+                    self.canvas[machine, i, avbl_slot[: job.res]] = new_color
+
+                break
+
         #MARK: changed
-        for r in range(0, self.num_res):
-            for t in range(0, self.time_horizon - job.len):
-                new_avbl_res = self.avbl_slot[t: t + job.len, r] - job.res
-                if np.all(new_avbl_res[:] >= 0):
-                    allocated = True
-                    self.avbl_slot[t: t + job.len, r] = new_avbl_res
-                    job.start_time = curr_time + t
-                    job.finish_time = job.start_time + job.len
-
-                    self.running_job.append(job)
-
-                    # update graphical representation
-
-                    used_color = np.unique(self.canvas[:])
-                    # WARNING: there should be enough colors in the color map
-                    for color in self.colormap:
-                        if color not in used_color:
-                            new_color = color
-                            break
-
-                    assert job.start_time != -1
-                    assert job.finish_time != -1
-                    assert job.finish_time > job.start_time
-                    canvas_start_time = job.start_time - curr_time
-                    canvas_end_time = job.finish_time - curr_time
-                    #MARK: changed
-                    for i in range(canvas_start_time, canvas_end_time):
-                        # get free indexes ( indexes in canvas for a resource in a specific time where is 0 )
-                        avbl_slot = np.where(self.canvas[r, i, :] == 0)[0]
-                        # fill canvas for that resource in that specific time from first available index to as much as the resource needed for that job
-                        self.canvas[r, i, avbl_slot[: job.res]] = new_color
-
-                    break
+        # for r in range(0, self.num_res):
+        #     for t in range(0, self.time_horizon - job.len):
+        #         new_avbl_res = self.avbl_slot[t: t + job.len, r] - job.res
+        #         if np.all(new_avbl_res[:] >= 0):
+        #             allocated = True
+        #             self.avbl_slot[t: t + job.len, r] = new_avbl_res
+        #             job.start_time = curr_time + t
+        #             job.finish_time = job.start_time + job.len
+        #
+        #             self.running_job.append(job)
+        #
+        #             # update graphical representation
+        #
+        #             used_color = np.unique(self.canvas[:])
+        #             # WARNING: there should be enough colors in the color map
+        #             for color in self.colormap:
+        #                 if color not in used_color:
+        #                     new_color = color
+        #                     break
+        #
+        #             assert job.start_time != -1
+        #             assert job.finish_time != -1
+        #             assert job.finish_time > job.start_time
+        #             canvas_start_time = job.start_time - curr_time
+        #             canvas_end_time = job.finish_time - curr_time
+        #             #MARK: changed
+        #             for i in range(canvas_start_time, canvas_end_time):
+        #                 # get free indexes ( indexes in canvas for a resource in a specific time where is 0 )
+        #                 avbl_slot = np.where(self.canvas[r, i, :] == 0)[0]
+        #                 # fill canvas for that resource in that specific time from first available index to as much as the resource needed for that job
+        #                 self.canvas[r, i, avbl_slot[: job.res]] = new_color
+        #
+        #             break
 
         return allocated
 
     def time_proceed(self, curr_time):
-
         self.avbl_slot[:-1, :] = self.avbl_slot[1:, :]
-        self.avbl_slot[-1, :] = self.res_slot
-
+        # MARK: changed
+        self.avbl_slot[-1, :] = self.machine_sizes
         for job in self.running_job:
 
             if job.finish_time <= curr_time:
@@ -568,11 +628,20 @@ if __name__ == '__main__':
     # test_image_speed()
     pa = Parameters()
     pa.simu_len = 20
+    pa.num_res = 2
     env = Env(pa)
 
+    env.step(5,0)
+    env.step(5,0)
+    env.step(5,1)
+    env.step(5,1)
+    env.step(5,1)
+    env.step(1,1)
+    env.step(2,0)
+    env.step(1,0)
+    env.step(5,0)
 
     # env.step(0)
-    # env.step(0)
     # env.step(5)
     # env.step(5)
     # env.step(5)
@@ -580,32 +649,17 @@ if __name__ == '__main__':
     # env.step(5)
     # env.step(5)
     # env.step(5)
-    # env.step(0)
-    # env.step(5)
-    # env.step(0)
-    # env.step(0)
-    # env.step(0)
-    # env.step(1)
-    env.step(0)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
-    env.step(5)
     # env.step(5)
     # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+    # env.step(5)
+
 
     print(env.nw_len_seqs,"aalo",env.nw_size_seqs,env.nw_priority_seqs)
     print("********************")

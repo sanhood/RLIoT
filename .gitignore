@@ -33,3 +33,4 @@
 venv
 .idea
 __pycache__
+somefile.txt

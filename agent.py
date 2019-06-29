@@ -78,6 +78,7 @@ def get_traj(agent, env, episode_max_length):
     Run agent-environment loop for one whole episode (trajectory)
     Return dictionary of results
     """
+    # MARK: changed
 
     env.reset()
     obs = []
@@ -85,21 +86,21 @@ def get_traj(agent, env, episode_max_length):
     rews = []
     entropy = []
     info = []
-
+    machines = []
     ob = env.observe()
 
     for _ in range(episode_max_length):
 
         act_prob = agent.get_action(ob)
-
+        machine_prob = agent.get_machine(ob)
         # csprob_n = np.cumsum(act_prob)
         # a = (csprob_n > np.random.rand()).argmax()
         # print(act_prob)
         ob = ob.reshape(ob.shape[0]*ob.shape[1])
         obs.append(ob)  # store the ob at current decision making step
         acts.append(act_prob)
-
-        ob, rew, done, info = env.step(act_prob, repeat=True)
+        machines.append(machine_prob)
+        ob, rew, done, info = env.step(act_prob,machine_prob, repeat=True)
 
         rews.append(rew)
 
@@ -109,7 +110,8 @@ def get_traj(agent, env, episode_max_length):
             'ob': np.array(obs),
             'action': np.array(acts),
             'entropy': entropy,
-            'info': info
+            'info': info,
+            'machine':np.array(machines)
             }
 
 
@@ -134,6 +136,8 @@ def get_traj_worker(pg_learner, env, pa, result):
     # Compute advantage function
     advs = [ret - baseline[:len(ret)] for ret in rets]
     all_action = np.concatenate([traj["action"] for traj in trajs])
+    # MARK: changed
+    all_machine = np.concatenate([traj["machine"] for traj in trajs])
     all_adv = np.concatenate(advs)
 
     all_eprews = np.array([compute_discounted_R(traj["reward"], pa.discount)[0] for traj in trajs])  # episode total rewards
@@ -153,7 +157,8 @@ def get_traj_worker(pg_learner, env, pa, result):
                    "all_eprews": all_eprews,
                    "all_eplens": all_eplens,
                    "all_slowdown": all_slowdown,
-                   "all_entropy": all_entropy})
+                   "all_entropy": all_entropy,
+                   "all_machine": all_machine})
 
 
 def process_all_info(trajs):
@@ -216,10 +221,12 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
     print("Start training...")
     # --------------------------------------
 
-    timer_start = time.time()
+
 
     for iteration in range(1, pa.num_epochs):
-
+        timer_start = time.time()
+        with open('somefile.txt', 'a') as the_file:
+            the_file.write("----------------Iteration %d----------------\n"%iteration)
         ps = []  # threads
         manager = Manager()  # managing return results
         manager_result = manager.list([])
@@ -267,8 +274,9 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
             # print("ok")
             all_ob = concatenate_all_ob_across_examples([r["all_ob"] for r in result], pa)
             all_action = np.concatenate([r["all_action"] for r in result])
+            all_machine = np.concatenate([r["all_machine"] for r in result])
             all_adv = np.concatenate([r["all_adv"] for r in result])
-            pg_learners[0].fit(all_ob, all_action, all_adv)
+            pg_learners[0].fit(all_ob, all_action, all_machine, all_adv)
 
             all_eprews.extend([r["all_eprews"] for r in result])
             # print(all_eprews)
@@ -298,7 +306,10 @@ def launch(pa, pg_resume=None, render=False, repre='image', end='no_new_job'):
             print ("Elapsed time\t %s" % (timer_end - timer_start), "seconds")
             print ("-----------------")
 
+            with open('somefile.txt', 'a') as the_file:
 
+                the_file.write("MeanRew: \t %s +- %s\n" % (np.mean(eprews), np.std(eprews)))
+                the_file.write("MeanSlowdown: \t %s\n-----------------\n\n" % np.mean(all_slowdown))
 
         #TODO: set paramaetes for other agents
 
@@ -360,12 +371,14 @@ def main():
     pa.new_job_rate = 0.3
 
     pa.episode_max_length = 2000  # 2000
-
+    pa.dist.job_small_chance = 0.6
+    pa.dist.job_len_small_upper = pa.dist.job_len / 2
+    pa.dist.other_res_upper = pa.dist.max_nw_size / 3
     pa.compute_dependent_parameters()
 
     # pa.max_nw_size = 5
     # pa.job_len = 5
-
+    pa.num_res = 2
 
 
     pg_resume = None

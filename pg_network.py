@@ -2,7 +2,7 @@
 
 from collections import OrderedDict
 import numpy as np
-
+from keras import losses
 from keras import layers
 from keras.models import Model
 from keras import backend as K
@@ -11,7 +11,7 @@ from keras import optimizers
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation, Flatten
 from keras.layers import Conv2D, MaxPooling2D
-
+from keras.models import Input
 
 
 
@@ -28,13 +28,15 @@ class PGLearner:
 
         self.update_counter = 0
 
-
-
+        # MARK: changed
+        self.second_output_height = pa.num_res
+        self.alpha = pa.alpha_loss
+        self.beta = pa.beta_loss
 
 
         # image representation
         self.model = \
-            build_pg_network(pa.network_input_height, pa.network_input_width, pa.network_output_dim)
+            build_pg_network(pa.network_input_height, pa.network_input_width, pa.network_output_dim, pa.num_res)
 
 
 
@@ -88,18 +90,48 @@ class PGLearner:
         `self.train_fn([state, action_one_hot, discount_reward])`
         which would train the model.
         """
-        action_prob_placeholder = self.model.output
+        # MARK: changed!
+
+        action_prob_placeholder = self.model.output[0]
+        machine_prob_placeholder = self.model.output[1]
         action_onehot_placeholder = K.placeholder(shape=(None, self.output_height),
                                                   name="action_onehot")
+        machine_onehot_placeholder = K.placeholder(shape=(None, self.second_output_height),
+                                                  name="machine_onehot")
         discount_reward_placeholder = K.placeholder(shape=(None,),
                                                     name="discount_reward")
+        # action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
+        # log_action_prob = K.log(action_prob)
+        # loss1 = - log_action_prob * discount_reward_placeholder
+        # loss1 = K.mean(loss1)
+        # # loss2 = losses.categorical_crossentropy(machine_onehot_placeholder, machine_prob_placeholder)
+        # machine_prob = K.sum(machine_prob_placeholder * machine_onehot_placeholder, axis=1)
+        # log_machine_prob = K.log(machine_prob)
+        # loss2 = - log_machine_prob * discount_reward_placeholder
+        # loss2 = K.mean(loss2)
+        # loss = self.alpha*loss1 + self.beta * loss2
 
         action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
         log_action_prob = K.log(action_prob)
-
-        loss = - log_action_prob * discount_reward_placeholder
+        machine_prob = K.sum(machine_prob_placeholder * machine_onehot_placeholder, axis=1)
+        log_machine_prob = K.log(machine_prob)
+        loss = - (log_action_prob + log_machine_prob) * discount_reward_placeholder
         loss = K.mean(loss)
 
+        # action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
+        # log_action_prob = K.log(action_prob)
+        # machine_prob = K.sum(machine_prob_placeholder * machine_onehot_placeholder, axis=1)
+        # # log_machine_prob = K.log(machine_prob)
+        # loss = - (machine_prob*log_action_prob) * discount_reward_placeholder
+        # loss = K.mean(loss)
+
+        # loss1 = - log_action_prob * discount_reward_placeholder
+
+        # loss2 = losses.categorical_crossentropy(machine_onehot_placeholder, machine_prob_placeholder)
+
+        # loss2 = - log_machine_prob * discount_reward_placeholder
+        # loss2 = K.mean(loss2)
+        # loss = self.alpha * loss1 + self.beta * loss2
         adam = optimizers.Adam()
 
         updates = adam.get_updates(params=self.model.trainable_weights,
@@ -108,9 +140,33 @@ class PGLearner:
 
         self.train_fn = K.function(inputs=[self.model.input,
                                            action_onehot_placeholder,
+                                           machine_onehot_placeholder,
                                            discount_reward_placeholder],
                                    outputs=[],
                                    updates=updates)
+        # action_prob_placeholder = self.model.output
+        # action_onehot_placeholder = K.placeholder(shape=(None, self.output_height),
+        #                                           name="action_onehot")
+        # discount_reward_placeholder = K.placeholder(shape=(None,),
+        #                                             name="discount_reward")
+        #
+        # action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
+        # log_action_prob = K.log(action_prob)
+        #
+        # loss = - log_action_prob * discount_reward_placeholder
+        # loss = K.mean(loss)
+        #
+        # adam = optimizers.Adam()
+        #
+        # updates = adam.get_updates(params=self.model.trainable_weights,
+        #
+        #                            loss=loss)
+        #
+        # self.train_fn = K.function(inputs=[self.model.input,
+        #                                    action_onehot_placeholder,
+        #                                    discount_reward_placeholder],
+        #                            outputs=[],
+        #                            updates=updates)
 
     def get_action(self, state):
         """Returns an action at given `state`
@@ -121,10 +177,18 @@ class PGLearner:
             action: an integer action value ranging from 0 to (n_actions - 1)
         """
         state = state.reshape(1,self.input_width*self.input_height)
-        action_prob = np.squeeze(self.model.predict(state))
+        action_prob = np.squeeze(self.model.predict(state)[0])
         return np.random.choice(np.arange(self.output_height), p=action_prob)
 
-    def fit(self, S, A, R):
+
+    # MARK: new function
+    def get_machine(self, state):
+        state = state.reshape(1, self.input_width * self.input_height)
+        machine_prob = np.squeeze(self.model.predict(state)[1])
+        return np.random.choice(np.arange(self.second_output_height), p=machine_prob)
+
+
+    def fit(self, S, A, M, R):
         """Train a network
         Args:
             S (2-D Array): `state` array of shape (n_samples, state_dimension)
@@ -134,8 +198,9 @@ class PGLearner:
                 A reward is given after each action.
         """
         action_onehot = np_utils.to_categorical(A, num_classes=self.output_height)
-
-        self.train_fn([S, action_onehot, R])
+        # MARK: changed
+        machine_onehot = np_utils.to_categorical(M, num_classes=self.second_output_height)
+        self.train_fn([S, action_onehot, machine_onehot, R])
 
     # get the action based on the estimated value
     def choose_action(self, state):
@@ -196,13 +261,31 @@ class PGLearner:
 # ===================================
 
 
-def build_pg_network(input_height, input_width, output_length):
-    model = Sequential()
-    model.add(Dense(20,  input_shape= (input_height*input_width,)))
-    print(model.input_shape)
-    model.add(Activation('relu'))
-    model.add(Dense(output_length))
-    model.add(Activation('softmax'))
+def build_pg_network(input_height, input_width, output_length1, output_length2):
+    # MARK: model changed (2 output)
+
+    # input = Input(shape=(input_height * ,))
+    # x = Dense(16, activation='relu')(input)
+    # x = Dense(32, activation='relu')(x)
+    # first_output = Dense(output_length1, activation='softmax')(x)
+    # second_output = Dense(output_length2, activation='softmax')(x)
+    # model = Model(input, [first_output, second_output])
+
+    input = Input(shape=(input_height*input_width,))
+    x = Dense(16, activation='relu')(input)
+    x = Dense(32, activation='relu')(x)
+    x = Dense(64, activation='relu')(x)
+    first_output = Dense(output_length1, activation='softmax')(x)
+    second_output = Dense(output_length2, activation='softmax')(x)
+    model = Model(input, [first_output, second_output])
+
+
+    # model = Sequential()
+    # model.add(Dense(20,  input_shape= (input_height*input_width,)))
+    # print(model.input_shape)
+    # model.add(Activation('relu'))
+    # model.add(Dense(output_length))
+    # model.add(Activation('softmax'))
     return model
 
 
